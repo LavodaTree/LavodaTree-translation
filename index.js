@@ -21,9 +21,12 @@ client.on('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.channel.id !== MONITOR_CHANNEL_ID) return;
 
+  // 全ての画像を配列として取得
+  const allEmbeds = message.embeds.map(e => e.toJSON());
+
   const payload = {
     content: message.content,
-    embeds: message.embeds.map(e => e.toJSON())
+    embeds: allEmbeds // 全ての画像を配列で送る
   };
 
   try {
@@ -32,9 +35,9 @@ client.on('messageCreate', async (message) => {
       body: JSON.stringify(payload),
       headers: { 'Content-Type': 'application/json' }
     });
-    console.log("GASへデータを送りました。");
+    console.log("GASへデータを送りました。画像数:", allEmbeds.length);
   } catch (err) {
-    console.error("エラーが発生しました:", err);
+    console.error("エラー:", err);
   }
 });
 
