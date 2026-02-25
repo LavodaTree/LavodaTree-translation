@@ -10,7 +10,8 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, 
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
   ]
 });
 
@@ -21,13 +22,20 @@ client.on('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot || message.channel.id !== MONITOR_CHANNEL_ID) return;
 
-  // 全ての画像を配列として取得
-  const allEmbeds = message.embeds.map(e => e.toJSON());
+  // 1秒だけ待つ（画像情報がDiscord側で生成されるのを待つおまじない）
+  await new Promise(resolve => setTimeout(resolve, 5000));
+
+  // メッセージを最新の状態に更新して画像を取得
+  const refreshedMessage = await message.channel.messages.fetch(message.id);
+  const allEmbeds = refreshedMessage.embeds.map(e => e.toJSON());
+
+  console.log("GASへデータを送ります。画像数:", allEmbeds.length);
 
   const payload = {
-    content: message.content,
-    embeds: allEmbeds // 全ての画像を配列で送る
+    content: refreshedMessage.content,
+    embeds: allEmbeds
   };
+  
 
   try {
     await fetch(GAS_URL, {
