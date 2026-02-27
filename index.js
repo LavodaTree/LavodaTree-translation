@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
 
-// 秘密の情報は後でRender側で設定します
 const TOKEN = process.env.DISCORD_TOKEN;
 const GAS_URL = process.env.GAS_DEPLOY_URL;
 const MONITOR_CHANNEL_ID = process.env.MONITOR_CHANNEL_ID;
@@ -11,42 +10,44 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMessageReactions,
   ]
 });
 
-client.on('ready', () => {
-  console.log(`${client.user.tag} が起動しました！`);
-});
+client.on('ready', () => console.log(`${client.user.tag} 起動完了`));
 
 client.on('messageCreate', async (message) => {
-  if (message.author.bot || message.channel.id !== MONITOR_CHANNEL_ID) return;
+  // 自分の投稿や指定チャンネル以外は無視（※ニュースボットを監視したい場合は author.bot 条件を外す）
+  if (message.channel.id !== MONITOR_CHANNEL_ID) return;
+  if (message.author.id === client.user.id) return; // 自分の投稿ループ防止
 
-  // 1秒だけ待つ（画像情報がDiscord側で生成されるのを待つおまじない）
-  await new Promise(resolve => setTimeout(resolve, 5000));
+  // 画像が生成されるまで少し待つ
+  await new Promise(res => setTimeout(res, 3000));
+  const msg = await message.channel.messages.fetch(message.id);
 
-  // メッセージを最新の状態に更新して画像を取得
-  const refreshedMessage = await message.channel.messages.fetch(message.id);
-  const allEmbeds = refreshedMessage.embeds.map(e => e.toJSON());
+  let allImages = [];
 
-  console.log("GASへデータを送ります。画像数:", allEmbeds.length);
+  // パターン1：URLプレビューなどの「埋め込み画像」を収集
+  msg.embeds.forEach(e => {
+    if (e.image) allImages.push({ image: { url: e.image.url } });
+  });
 
-  const payload = {
-    content: refreshedMessage.content,
-    embeds: allEmbeds
-  };
-  
+  // パターン2：スマホ等から直接上げた「添付画像」を収集
+  msg.attachments.forEach(a => {
+    if (a.contentType && a.contentType.startsWith('image/')) {
+      allImages.push({ image: { url: a.url } });
+    }
+  });
 
-  try {
-    await fetch(GAS_URL, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-      headers: { 'Content-Type': 'application/json' }
-    });
-    console.log("GASへデータを送りました。画像数:", allEmbeds.length);
-  } catch (err) {
-    console.error("エラー:", err);
-  }
+  console.log("GASへ送信。画像検知数:", allImages.length);
+
+  await fetch(GAS_URL, {
+    method: 'POST',
+    body: JSON.stringify({
+      content: msg.content,
+      embeds: allImages
+    }),
+    headers: { 'Content-Type': 'application/json' }
+  });
 });
 
 client.login(TOKEN);
