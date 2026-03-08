@@ -1,44 +1,68 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const fetch = require('node-fetch');
 const http = require('http');
+const https = require('https');
 
-// Renderのタイムアウト対策（偽の窓口）
-http.createServer((req, res) => { res.write("OK"); res.end(); }).listen(process.env.PORT || 8080);
+// --- Renderの「ポートエラー」を防ぐダミーサーバー ---
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end("Bot is alive!");
+});
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => console.log(`[System] Web server listening on port ${PORT}`));
 
+// --- ボット本体の設定 ---
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-client.on('ready', () => console.log(`Logged in as ${client.user.tag}`));
+// 起動確認用
+client.once('ready', () => {
+  console.log(`[Success] ${client.user.tag} としてログインしました！`);
+});
 
 client.on('messageCreate', async (message) => {
+  // 監視チャンネル以外、または自分自身の投稿は無視
   if (message.channel.id !== process.env.MONITOR_CHANNEL_ID) return;
   if (message.author.id === client.user.id) return;
 
-  // 画像が生成されるまでしっかり待つ（3秒）
-  await new Promise(res => setTimeout(res, 3000));
-  const msg = await message.channel.messages.fetch(message.id);
+  console.log(`[Debug] メッセージを検知: "${message.content.substring(0, 10)}..."`);
 
-  let imageList = [];
+  // 画像URLを収集（EmbedsとAttachments両方）
+  let imageUrls = [];
+  message.attachments.forEach(a => { if (a.contentType?.startsWith('image/')) imageUrls.push(a.url); });
+  message.embeds.forEach(e => { if (e.image) imageUrls.push(e.image.url); });
 
-  // 方法1: 直接アップロードされた画像を拾う
-  msg.attachments.forEach(a => {
-    if (a.contentType?.startsWith('image/')) imageList.push({ image: { url: a.url } });
+  const data = JSON.stringify({
+    content: message.content,
+    images: imageUrls
   });
 
-  // 方法2: ニュースボットなどの「埋め込み」から画像を拾う
-  msg.embeds.forEach(e => {
-    if (e.image) imageList.push({ image: { url: e.image.url } });
-    else if (e.thumbnail) imageList.push({ image: { url: e.thumbnail.url } });
-  });
-
-  console.log(`送信開始: 画像${imageList.length}枚`);
-
-  await fetch(process.env.GAS_DEPLOY_URL, {
+  // GASへ送信
+  const url = new URL(process.env.GAS_DEPLOY_URL);
+  const options = {
+    hostname: url.hostname,
+    path: url.pathname + url.search,
     method: 'POST',
-    body: JSON.stringify({ content: msg.content, images: imageList }),
-    headers: { 'Content-Type': 'application/json' }
+    headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
+  };
+
+  const req = https.request(options, (res) => {
+    console.log(`[GAS] 送信完了。ステータス: ${res.statusCode}`);
   });
+
+  req.on('error', (e) => console.error(`[Error] GAS送信失敗: ${e.message}`));
+  req.write(data);
+  req.end();
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// エラー発生時にログへ書き出す
+process.on('unhandledRejection', error => console.error('[Fatal] 未処理の例外:', error));
+
+client.login(process.env.DISCORD_TOKEN).catch(err => {
+  console.error('[Error] Discordへのログインに失敗しました。トークンを確認してください。');
+  console.error(err);
+});
