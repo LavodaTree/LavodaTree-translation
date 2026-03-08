@@ -1,16 +1,15 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const http = require('http');
 const https = require('https');
 
-// --- Renderの「ポートエラー」を防ぐダミーサーバー ---
-const server = http.createServer((req, res) => {
+// --- Render用サーバー（ここまでは成功しています） ---
+http.createServer((req, res) => {
   res.writeHead(200);
-  res.end("Bot is alive!");
+  res.end("Server is running");
+}).listen(process.env.PORT || 8080, () => {
+  console.log(`[1/3] Webサーバー起動成功 (Port: ${process.env.PORT || 8080})`);
 });
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => console.log(`[System] Web server listening on port ${PORT}`));
 
-// --- ボット本体の設定 ---
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -19,50 +18,46 @@ const client = new Client({
   ]
 });
 
-// 起動確認用
+// --- 起動チェック ---
 client.once('ready', () => {
-  console.log(`[Success] ${client.user.tag} としてログインしました！`);
+  console.log(`[2/3] Discordログイン成功！: ${client.user.tag}`);
 });
 
 client.on('messageCreate', async (message) => {
-  // 監視チャンネル以外、または自分自身の投稿は無視
   if (message.channel.id !== process.env.MONITOR_CHANNEL_ID) return;
   if (message.author.id === client.user.id) return;
 
-  console.log(`[Debug] メッセージを検知: "${message.content.substring(0, 10)}..."`);
+  console.log(`[3/3] メッセージ検知: 送信を開始します...`);
 
-  // 画像URLを収集（EmbedsとAttachments両方）
-  let imageUrls = [];
-  message.attachments.forEach(a => { if (a.contentType?.startsWith('image/')) imageUrls.push(a.url); });
-  message.embeds.forEach(e => { if (e.image) imageUrls.push(e.image.url); });
+  // 画像URLを抽出（以前成功していた Embed 形式を意識）
+  let images = [];
+  message.attachments.forEach(a => { if (a.contentType?.includes('image')) images.push(a.url); });
+  message.embeds.forEach(e => { if (e.image) images.push(e.image.url); });
 
-  const data = JSON.stringify({
+  const payload = JSON.stringify({
     content: message.content,
-    images: imageUrls
+    images: images
   });
 
-  // GASへ送信
   const url = new URL(process.env.GAS_DEPLOY_URL);
   const options = {
     hostname: url.hostname,
     path: url.pathname + url.search,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
   };
 
   const req = https.request(options, (res) => {
-    console.log(`[GAS] 送信完了。ステータス: ${res.statusCode}`);
+    console.log(`[完了] GASへの送信ステータス: ${res.statusCode}`);
   });
 
-  req.on('error', (e) => console.error(`[Error] GAS送信失敗: ${e.message}`));
-  req.write(data);
+  req.on('error', (e) => console.error(`[エラー] 送信失敗: ${e.message}`));
+  req.write(payload);
   req.end();
 });
 
-// エラー発生時にログへ書き出す
-process.on('unhandledRejection', error => console.error('[Fatal] 未処理の例外:', error));
-
+// ログイン実行とエラー捕捉
+console.log("Discordへ接続を試みています...");
 client.login(process.env.DISCORD_TOKEN).catch(err => {
-  console.error('[Error] Discordへのログインに失敗しました。トークンを確認してください。');
-  console.error(err);
+  console.error("[致命的エラー] ログインに失敗しました。トークンが正しいか確認してください:", err.message);
 });
